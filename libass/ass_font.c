@@ -91,18 +91,6 @@ uint32_t ass_font_index_magic(FT_Face face, uint32_t symbol)
     }
 }
 
-/**
- * \brief find a memory font by name
- */
-static int find_font(ASS_Library *library, char *name)
-{
-    int i;
-    for (i = 0; i < library->num_fontdata; ++i)
-        if (strcasecmp(name, library->fontdata[i].name) == 0)
-            return i;
-    return -1;
-}
-
 static void buggy_font_workaround(FT_Face face)
 {
     // Some fonts have zero Ascender/Descender fields in 'hhea' table.
