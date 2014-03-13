@@ -25,6 +25,7 @@
 #include <inttypes.h>
 #include <strings.h>
 #include <ctype.h>
+#include <limits.h>
 
 #include "ass_library.h"
 #include "ass.h"

@@ -166,6 +166,15 @@ Bitmap *outline_to_bitmap(ASS_Library *library, FT_Library ftlib,
     FT_Bitmap bitmap;
 
     FT_Outline_Get_CBox(outline, &bbox);
+    if (bbox.xMin >= bbox.xMax || bbox.yMin >= bbox.yMax) {
+        Bitmap *bm = malloc(sizeof(Bitmap));
+        bm->buffer = NULL;
+        bm->w = bm->h = 0;
+        bm->stride = 0;
+        bm->left = bm->top = 0;
+        return bm;
+    }
+
     // move glyph to origin (0, 0)
     bbox.xMin &= ~63;
     bbox.yMin &= ~63;
@@ -544,7 +553,7 @@ void sub_bitmaps_c(uint8_t *dst, intptr_t dst_stride,
                    uint8_t *src, intptr_t src_stride,
                    intptr_t height, intptr_t width)
 {
-    unsigned out;
+    short out;
     uint8_t* end = dst + dst_stride * height;
     while (dst < end) {
         for (unsigned j = 0; j < width; ++j) {

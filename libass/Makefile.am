@@ -6,14 +6,15 @@ LIBASS_LT_CURRENT = 5
 LIBASS_LT_REVISION = 0
 LIBASS_LT_AGE = 0
 
+yasm_verbose = $(yasm_verbose_$(V))
+yasm_verbose_ = $(yasm_verbose_$(AM_DEFAULT_VERBOSITY))
+yasm_verbose_0 = @echo "  YASM    " $@;
+
 .asm.lo:
-	$(LIBTOOL) --quiet --mode=compile $(AS) $(ASFLAGS) -o $@ $< -prefer-non-pic
+	$(yasm_verbose)$(LIBTOOL) $(AM_V_lt) --mode=compile $(AS) $(ASFLAGS) -o $@ $< -prefer-non-pic
 
-.S.lo:
-	$(LIBTOOL) --quiet --mode=compile $(AS) $(ASFLAGS)-o $@ $< -prefer-non-pic
-
-SRC_INTEL = x86/blend_bitmaps.asm x86/cpuid.asm
-SRC_INTEL64 = x86/be_blur.asm
+SRC_INTEL = x86/blend_bitmaps.asm x86/cpuid.asm x86/blend_bitmaps.h x86/cpuid.h
+SRC_INTEL64 = x86/be_blur.asm x86/be_blur.h
 
 lib_LTLIBRARIES = libass.la
 libass_la_SOURCES = ass.c ass_cache.c ass_font.c ass_fontselect.c ass_render.c \
@@ -30,32 +31,9 @@ libass_la_LDFLAGS += -export-symbols $(srcdir)/libass.sym
 
 if ASM
 if INTEL
-AS = "yasm"
 libass_la_SOURCES += $(SRC_INTEL)
-if X86
-ASFLAGS += -DARCH_X86_64=0 -m x86
-if MACHO
-ASFLAGS += -f macho32 -DPREFIX
-endif
-if ELF
-ASFLAGS += -f elf
-endif
-if WIN32
-ASFLAGS += -f win32 -DPREFIX
-endif
-endif
 if X64
 libass_la_SOURCES += $(SRC_INTEL64)
-ASFLAGS += -DARCH_X86_64=1 -m amd64
-if MACHO
-ASFLAGS += -f macho64 -DPREFIX
-endif
-if ELF
-ASFLAGS += -f elf
-endif
-if WIN32
-ASFLAGS += -f win64
-endif
 endif
 endif
 endif
@@ -63,4 +41,4 @@ endif
 assheadersdir = $(includedir)/ass
 dist_assheaders_HEADERS = ass.h ass_types.h
 
-EXTRA_DIST = libass.sym
+EXTRA_DIST = libass.sym x86/x86inc.asm
