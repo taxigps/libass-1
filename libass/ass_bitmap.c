@@ -18,6 +18,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -156,7 +158,63 @@ Bitmap *copy_bitmap(const Bitmap *src)
     return dst;
 }
 
-Bitmap *outline_to_bitmap(ASS_Library *library, FT_Library ftlib,
+#if CONFIG_RASTERIZER
+
+Bitmap *outline_to_bitmap(ASS_Renderer *render_priv,
+                          FT_Outline *outline, int bord)
+{
+    ASS_Rasterizer *rst = &render_priv->rasterizer;
+    if (!rasterizer_set_outline(rst, outline)) {
+        ass_msg(render_priv->library, MSGL_WARN, "Failed to process glyph outline!\n");
+        return NULL;
+    }
+
+    if (rst->x_min >= rst->x_max || rst->y_min >= rst->y_max) {
+        Bitmap *bm = alloc_bitmap(2 * bord, 2 * bord);
+        bm->left = bm->top = -bord;
+        return bm;
+    }
+
+    int x_min = rst->x_min >> 6;
+    int y_min = rst->y_min >> 6;
+    int x_max = (rst->x_max + 63) >> 6;
+    int y_max = (rst->y_max + 63) >> 6;
+    int w = x_max - x_min;
+    int h = y_max - y_min;
+
+    if (w * h > 8000000) {
+        ass_msg(render_priv->library, MSGL_WARN, "Glyph bounding box too large: %dx%dpx",
+                w, h);
+        return NULL;
+    }
+
+    int mask = (1 << rst->tile_order) - 1;
+    int tile_w = (w + 2 * bord + mask) & ~mask;
+    int tile_h = (h + 2 * bord + mask) & ~mask;
+    Bitmap *bm = alloc_bitmap(tile_w, tile_h);
+    bm->left = x_min - bord;
+    bm->top = -y_max - bord;
+
+    int offs = bord & ~mask;
+    int bord_h = tile_h - h - bord;
+    if (!rasterizer_fill(rst,
+            bm->buffer + offs * (bm->stride + 1),
+            x_min - bord + offs,
+            y_min - bord_h + (bord_h & ~mask),
+            ((w + bord + mask) & ~mask) - offs,
+            ((h + bord + mask) & ~mask) - offs,
+            bm->stride, 1)) {
+        ass_msg(render_priv->library, MSGL_WARN, "Failed to rasterize glyph!\n");
+        ass_free_bitmap(bm);
+        return NULL;
+    }
+
+    return bm;
+}
+
+#else
+
+Bitmap *outline_to_bitmap(ASS_Renderer *render_priv,
                           FT_Outline *outline, int bord)
 {
     Bitmap *bm;
@@ -167,11 +225,8 @@ Bitmap *outline_to_bitmap(ASS_Library *library, FT_Library ftlib,
 
     FT_Outline_Get_CBox(outline, &bbox);
     if (bbox.xMin >= bbox.xMax || bbox.yMin >= bbox.yMax) {
-        Bitmap *bm = malloc(sizeof(Bitmap));
-        bm->buffer = NULL;
-        bm->w = bm->h = 0;
-        bm->stride = 0;
-        bm->left = bm->top = 0;
+        bm = alloc_bitmap(2 * bord, 2 * bord);
+        bm->left = bm->top = -bord;
         return bm;
     }
 
@@ -189,7 +244,7 @@ Bitmap *outline_to_bitmap(ASS_Library *library, FT_Library ftlib,
     bbox.yMax >>= 6;
 
     if (w * h > 8000000) {
-        ass_msg(library, MSGL_WARN, "Glyph bounding box too large: %dx%dpx",
+        ass_msg(render_priv->library, MSGL_WARN, "Glyph bounding box too large: %dx%dpx",
                 w, h);
         return NULL;
     }
@@ -206,14 +261,16 @@ Bitmap *outline_to_bitmap(ASS_Library *library, FT_Library ftlib,
     bitmap.pixel_mode = FT_PIXEL_MODE_GRAY;
 
     // render into target bitmap
-    if ((error = FT_Outline_Get_Bitmap(ftlib, outline, &bitmap))) {
-        ass_msg(library, MSGL_WARN, "Failed to rasterize glyph: %d\n", error);
+    if ((error = FT_Outline_Get_Bitmap(render_priv->ftlibrary, outline, &bitmap))) {
+        ass_msg(render_priv->library, MSGL_WARN, "Failed to rasterize glyph: %d\n", error);
         ass_free_bitmap(bm);
         return NULL;
     }
 
     return bm;
 }
+
+#endif
 
 /**
  * \brief fix outline bitmap
@@ -436,7 +493,7 @@ void be_blur_c(uint8_t *buf, intptr_t w,
 {
     unsigned short *col_pix_buf = tmp;
     unsigned short *col_sum_buf = tmp + w * sizeof(unsigned short);
-    unsigned x, y, old_pix, old_sum, new_sum, temp1, temp2;
+    unsigned x, y, old_pix, old_sum, temp1, temp2;
     unsigned char *src, *dst;
     memset(col_pix_buf, 0, w * sizeof(unsigned short));
     memset(col_sum_buf, 0, w * sizeof(unsigned short));
@@ -456,9 +513,10 @@ void be_blur_c(uint8_t *buf, intptr_t w,
             col_pix_buf[x] = temp1;
         }
     }
-    new_sum = 2 * buf[y * stride + w - 1];
-    buf[y * stride + w - 1] = (old_sum + new_sum) >> 2;
     {
+        y = 1;
+        src=buf+y*stride;
+
         x = 2;
         old_pix = src[x-1];
         old_sum = old_pix + src[x-2];
@@ -497,8 +555,7 @@ void be_blur_c(uint8_t *buf, intptr_t w,
     }
 }
 
-int outline_to_bitmap3(ASS_Library *library, ASS_SynthPriv *priv_blur,
-                       FT_Library ftlib, FT_Outline *outline, FT_Outline *border,
+int outline_to_bitmap3(ASS_Renderer *render_priv, FT_Outline *outline, FT_Outline *border,
                        Bitmap **bm_g, Bitmap **bm_o, Bitmap **bm_s,
                        int be, double blur_radius, FT_Vector shadow_offset,
                        int border_style, int border_visible)
@@ -515,12 +572,12 @@ int outline_to_bitmap3(ASS_Library *library, ASS_SynthPriv *priv_blur,
     *bm_g = *bm_o = *bm_s = 0;
 
     if (outline)
-        *bm_g = outline_to_bitmap(library, ftlib, outline, bord);
+        *bm_g = outline_to_bitmap(render_priv, outline, bord);
     if (!*bm_g)
         return 1;
 
     if (border) {
-        *bm_o = outline_to_bitmap(library, ftlib, border, bord);
+        *bm_o = outline_to_bitmap(render_priv, border, bord);
         if (!*bm_o) {
             return 1;
         }
